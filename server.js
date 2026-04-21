@@ -18,14 +18,16 @@ function nowIso() {
 function safeJsonParse(str) {
   try {
     return JSON.parse(str);
-  } catch {
+  } catch (err) {
     return null;
   }
 }
 
 function addPacket(packet) {
   packets.unshift(packet);
-  if (packets.length > MAX_PACKETS) packets.length = MAX_PACKETS;
+  if (packets.length > MAX_PACKETS) {
+    packets.length = MAX_PACKETS;
+  }
 }
 
 function broadcastToBrowsers(messageObj) {
@@ -39,38 +41,38 @@ function broadcastToBrowsers(messageObj) {
 
 function summarizePacket(data, req) {
   const ip =
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+    (req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
     req.socket.remoteAddress ||
     "unknown";
 
   return {
     receivedAt: nowIso(),
     ip,
-    deviceId: data?.deviceId || "unknown",
-    homeLabel: data?.homeLabel || "-",
-    fw: data?.fw || "-",
-    type: data?.type || "unknown",
-    event: data?.event || "-",
-    flow: data?.flow || "-",
-    severity: data?.severity || "-",
+    deviceId: data && data.deviceId ? data.deviceId : "unknown",
+    homeLabel: data && data.homeLabel ? data.homeLabel : "-",
+    fw: data && data.fw ? data.fw : "-",
+    type: data && data.type ? data.type : "unknown",
+    event: data && data.event ? data.event : "-",
+    flow: data && data.flow ? data.flow : "-",
+    severity: data && data.severity ? data.severity : "-",
     metrics: {
-      voltage: data?.metrics?.voltage ?? null,
-      amps: data?.metrics?.amps ?? null,
-      watts: data?.metrics?.watts ?? null,
-      peakWatts: data?.metrics?.peakWatts ?? null,
-      chipTempC: data?.metrics?.chipTempC ?? null,
-      rssi: data?.metrics?.rssi ?? null
+      voltage: data && data.metrics ? data.metrics.voltage ?? null : null,
+      amps: data && data.metrics ? data.metrics.amps ?? null : null,
+      watts: data && data.metrics ? data.metrics.watts ?? null : null,
+      peakWatts: data && data.metrics ? data.metrics.peakWatts ?? null : null,
+      chipTempC: data && data.metrics ? data.metrics.chipTempC ?? null : null,
+      rssi: data && data.metrics ? data.metrics.rssi ?? null : null
     },
     state: {
-      running: data?.state?.running ?? null,
-      alert: data?.state?.alert ?? "-",
-      health: data?.state?.health ?? null
+      running: data && data.state ? data.state.running ?? null : null,
+      alert: data && data.state ? data.state.alert ?? "-" : "-",
+      health: data && data.state ? data.state.health ?? null : null
     },
     runtime: {
-      durationMs: data?.runtime?.durationMs ?? null
+      durationMs: data && data.runtime ? data.runtime.durationMs ?? null : null
     },
     stats: {
-      sampleCount: data?.stats?.sampleCount ?? null
+      sampleCount: data && data.stats ? data.stats.sampleCount ?? null : null
     },
     raw: data
   };
@@ -78,7 +80,10 @@ function summarizePacket(data, req) {
 
 const wss = new WebSocketServer({ noServer: true });
 
+// IMPORTANT:
 // Cloud websocket is ROOT "/"
+// Firmware should use:
+// wss://your-render-service.onrender.com/
 server.on("upgrade", (req, socket, head) => {
   if (req.url !== "/") {
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -92,7 +97,7 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 wss.on("connection", (ws, req) => {
-  const ua = (req.headers["user-agent"] || "").toLowerCase();
+  const ua = String(req.headers["user-agent"] || "").toLowerCase();
   const isBrowser = ua.includes("mozilla");
 
   if (isBrowser) {
@@ -127,11 +132,11 @@ wss.on("connection", (ws, req) => {
     const packet = summarizePacket(parsed, req);
     addPacket(packet);
 
-    console.log("[PACKET]", JSON.stringify(packet));
+    console.log("[PACKET] " + JSON.stringify(packet));
 
     broadcastToBrowsers({
       type: "packet",
-      packet
+      packet: packet
     });
 
     ws.send(
@@ -150,7 +155,7 @@ wss.on("connection", (ws, req) => {
   });
 
   ws.on("error", (err) => {
-    console.error("[WS ERROR]", err.message);
+    console.error("[WS ERROR] " + err.message);
     browserClients.delete(ws);
   });
 
@@ -185,7 +190,7 @@ app.get("/packets", (req, res) => {
   res.json({
     ok: true,
     count: packets.length,
-    packets
+    packets: packets
   });
 });
 
@@ -311,6 +316,13 @@ app.get("/", (req, res) => {
       font-size:12px;
       font-weight:700;
     }
+    @media (max-width: 1100px){
+      .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+    @media (max-width: 700px){
+      .grid{grid-template-columns:1fr}
+      .title{font-size:30px}
+    }
   </style>
 </head>
 <body>
@@ -393,9 +405,9 @@ app.get("/", (req, res) => {
       <td>\${esc(packet.homeLabel || "-")}</td>
       <td><span class="pill">\${esc(packet.type || "-")}</span></td>
       <td>\${esc(flowOrEvent || "-")}</td>
-      <td>\${packet.metrics?.watts == null ? "-" : esc(Number(packet.metrics.watts).toFixed(1))}</td>
-      <td>\${esc(packet.state?.alert || "-")}</td>
-      <td>\${packet.state?.health == null ? "-" : esc(Number(packet.state.health).toFixed(1))}</td>
+      <td>\${packet.metrics && packet.metrics.watts != null ? esc(Number(packet.metrics.watts).toFixed(1)) : "-"}</td>
+      <td>\${esc(packet.state ? packet.state.alert : "-")}</td>
+      <td>\${packet.state && packet.state.health != null ? esc(Number(packet.state.health).toFixed(1)) : "-"}</td>
       <td><div class="payload">\${esc(JSON.stringify(packet.raw, null, 2))}</div></td>
     \`;
     tbody.prepend(tr);
@@ -429,7 +441,9 @@ app.get("/", (req, res) => {
         rows.forEach(renderRow);
         total = msg.recentPackets.length;
         packetCount.textContent = total;
-        if (msg.recentPackets[0]?.deviceId) latestDevice.textContent = msg.recentPackets[0].deviceId;
+        if (msg.recentPackets[0] && msg.recentPackets[0].deviceId) {
+          latestDevice.textContent = msg.recentPackets[0].deviceId;
+        }
         return;
       }
 
@@ -449,5 +463,5 @@ app.get("/", (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(\`NOHM Predict server listening on port \${PORT}\`);
+  console.log("NOHM Predict server listening on port " + PORT);
 });
